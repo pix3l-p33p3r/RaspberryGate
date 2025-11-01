@@ -1,65 +1,49 @@
 #!/bin/bash
 
+# Constants
 NAME='gate'
 GITNAME='git-update'
 INSTALL_PATH='/usr/bin/gateRp'
+GATE_SERVICE_FILE="/etc/systemd/system/$NAME.service"
+GIT_SERVICE_FILE="/etc/systemd/system/$GITNAME.service"
 
-# check permissions
-if [ "$EUID" -ne 0 ]
-  then echo "Please run as root"
-  exit 127
+# Exit on errors
+set -e
+
+# Check root permissions
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root"
+    exit 1
 fi
 
-SCRIPT=$(realpath "$0")
-SCRIPT_PATH=$(dirname "$SCRIPT")
-
+# Uninstall previous version if exists
 if [ -d "$INSTALL_PATH" ]; then
-
-    echo "Unistalling..."
-    rm -rf $INSTALL_PATH
-
-    rm -rf /etc/systemd/system/$NAME.service
-    systemctl disable $NAME.service
-    systemctl stop $NAME.service
-
-    rm -rf /etc/systemd/system/$GITNAME.service
-    systemctl disable $GITNAME.service
-    systemctl stop $GITNAME.service
+    echo "Uninstalling previous version..."
+    systemctl stop "$NAME.service" "$GITNAME.service" || true
+    systemctl disable "$NAME.service" "$GITNAME.service" || true
+    rm -f "$GATE_SERVICE_FILE" "$GIT_SERVICE_FILE" || true
+    rm -rf "$INSTALL_PATH" || true
 fi
 
-echo "Install python libraries..."
+# Install required Python libraries
+echo "Installing python libraries..."
 apt update
 apt install -y python3.9 python3-pip
-
 python3 -m pip install evdev pyusb pyudev requests python-dotenv watchdog netifaces
 
-
-
-# python3 -m pip install evdev
-# python3 -m pip install pyusb
-# python3 -m pip install pyudev
-# python3 -m pip install requests
-# python3 -m pip install python-dotenv
-# python3 -m pip install watchdog
-# python3 -m pip install netifaces
-
-# copy project directory:
+# Copy project directory
 echo "Copying project directory..."
-mkdir -p $INSTALL_PATH
-git config --global --add safe.directory $INSTALL_PATH
-chmod +x ./src/main.py
-chmod +x ./run.sh
-chmod +x ./update.sh
-cp -ra $SCRIPT_PATH/. $INSTALL_PATH
-mkdir -p /var/log/$NAME/
-mv /var/log/$NAME/$NAME.log /var/log/$NAME/$NAME.log.$(date +"%F_%T").backup &> /dev/null
-touch /var/log/$NAME/$NAME.log
+mkdir -p "$INSTALL_PATH"
+git config --global --add safe.directory "$INSTALL_PATH"
+chmod +x "$SCRIPT_PATH/src/main.py" "$SCRIPT_PATH/run.sh" "$SCRIPT_PATH/update.sh"
+cp -ra "$SCRIPT_PATH/." "$INSTALL_PATH"
+mkdir -p "/var/log/$NAME/"
+mv "/var/log/$NAME/$NAME.log" "/var/log/$NAME/$NAME.log.$(date +'%F_%T').backup" &> /dev/null || true
+touch "/var/log/$NAME/$NAME.log"
 
-# set gate in startup service:
-echo "Set gate in startup..."
-
-GATE_SERVICE_FILE="/etc/systemd/system/$NAME.service"
-cat << __EOF > $GATE_SERVICE_FILE
+# Set up systemd services
+echo "Setting up systemd services..."
+cat << __EOF > "$GATE_SERVICE_FILE"
 [Unit]
 Description=$NAME
 After=multi-user.target
@@ -75,10 +59,7 @@ ExecStart=bash $INSTALL_PATH/run.sh
 WantedBy=multi-user.target
 __EOF
 
-echo "Set git update in startup..."
-
-GIT_SERVICE_FILE="/etc/systemd/system/$GITNAME.service"
-cat << __EOF > $GIT_SERVICE_FILE
+cat << __EOF > "$GIT_SERVICE_FILE"
 [Unit]
 Description=$GITNAME
 
@@ -90,15 +71,10 @@ ExecStart=bash $INSTALL_PATH/update.sh
 WantedBy=default.target
 __EOF
 
-# Reload systemd:
-echo "Reload systemd..."
+# Reload systemd and enable services
+echo "Configuring and enabling services..."
 systemctl daemon-reload
+systemctl enable "$NAME.service" "$GITNAME.service"
+systemctl start "$NAME.service" "$GITNAME.service"
 
-# Enable the service:
-echo "Enable the service..."
-systemctl enable $NAME.service
-systemctl start $NAME.service
-
-systemctl enable $GITNAME.service
-systemctl start $GITNAME.service
-
+echo "Installation and setup completed."
